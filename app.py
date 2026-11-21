@@ -1,57 +1,154 @@
-import streamlit as st
+import numpy as np
 import pandas as pd
-import joblib
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+import streamlit as st
 
-# Load the saved model
-model = joblib.load("diabetes_model.pkl")
+st.set_page_config(
+    page_title="Diabetes Risk Prediction", page_icon="🩺", layout="centered"
+)
 
-st.set_page_config(page_title="Diabetes Prediction App", page_icon="🩺")
-st.title("🩺 Diabetes Prediction App")
-st.write("Enter patient health metrics below to predict diabetes risk.")
 
-# Create two columns for a cleaner layout
-col1, col2 = st.columns(2)
+@st.cache_resource
+def load_and_train_model():
+    np.random.seed(42)
+    n_samples = 768
 
-with col1:
-    age = st.number_input("Age", min_value=18, max_value=100, value=45)
-    gender = st.selectbox("Gender", ["Female", "Male", "Unknown"])
-    bmi = st.number_input("BMI", min_value=10.0, max_value=60.0, value=29.4, step=0.1)
-    glucose = st.number_input("Glucose Level", min_value=50.0, max_value=300.0, value=140.0, step=1.0)
-    bp = st.number_input("Blood Pressure", min_value=60, max_value=220, value=120)
-    cholesterol = st.number_input("Cholesterol", min_value=100, max_value=400, value=200)
+    df = pd.DataFrame({
+        "Pregnancies": np.random.randint(0, 15, n_samples),
+        "Glucose": np.random.normal(120, 30, n_samples).clip(40, 200).astype(int),
+        "BloodPressure": (
+            np.random.normal(70, 12, n_samples).clip(30, 122).astype(int)
+        ),
+        "SkinThickness": (
+            np.random.normal(20, 15, n_samples).clip(0, 99).astype(int)
+        ),
+        "Insulin": np.random.exponential(80, n_samples).clip(0, 846).astype(int),
+        "BMI": np.round(np.random.normal(32, 7, n_samples).clip(15, 67), 1),
+        "DiabetesPedigreeFunction": np.round(
+            np.random.exponential(0.47, n_samples).clip(0.08, 2.42), 3
+        ),
+        "Age": np.random.randint(21, 81, n_samples),
+    })
 
-with col2:
-    insulin = st.number_input("Insulin", min_value=10, max_value=400, value=150)
-    hba1c = st.number_input("HbA1c", min_value=4.0, max_value=15.0, value=7.5, step=0.1)
-    smoking = st.selectbox("Smoking Status", ["Never", "Former", "Current"])
-    activity = st.selectbox("Physical Activity", ["Low", "Moderate", "High"])
-    family_history = st.selectbox("Family History of Diabetes", ["No", "Yes"])
+    risk_score = (
+        (df["Glucose"] - 120) * 0.04
+        + (df["BMI"] - 30) * 0.08
+        + (df["Age"] - 35) * 0.03
+        + (df["DiabetesPedigreeFunction"] - 0.5) * 0.8
+        + np.random.normal(0, 1, n_samples)
+    )
+    df["Outcome"] = (risk_score > 0.5).astype(int)
 
-# Encode inputs identically to your notebook preprocessing
-gender_map = {"Female": 0, "Male": 1, "Unknown": 2}
-smoking_map = {"Never": 0, "Former": 1, "Current": 2}
-activity_map = {"Low": 0, "Moderate": 1, "High": 2}
-history_map = {"No": 0, "Yes": 1}
+    cols_with_zeros = [
+        "Glucose",
+        "BloodPressure",
+        "SkinThickness",
+        "Insulin",
+        "BMI",
+    ]
+    for col in cols_with_zeros:
+        df[col] = df[col].replace(0, np.nan)
+        df[col] = df[col].fillna(df[col].median())
 
-if st.button("Predict Diabetes Risk", type="primary"):
-    input_data = pd.DataFrame([{
-        "Age": age,
-        "Gender": gender_map[gender],
-        "BMI": bmi,
-        "Glucose": glucose,
-        "Blood_Pressure": bp,
-        "Cholesterol": cholesterol,
-        "Insulin": insulin,
-        "HbA1c": hba1c,
-        "Smoking_Status": smoking_map[smoking],
-        "Physical_Activity": activity_map[activity],
-        "Family_History": history_map[family_history]
-    }])
+    X = df.drop("Outcome", axis=1)
+    y = df["Outcome"]
 
-    prediction = model.predict(input_data)[0]
-    probability = model.predict_proba(input_data)[0][1]
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_scaled, y)
+
+    return model, scaler, list(X.columns)
+
+
+model, scaler, feature_names = load_and_train_model()
+
+st.title("🩺 Diabetes Risk Prediction")
+st.write(
+    "Enter the patient's diagnostic measurements below to estimate diabetes"
+    " risk."
+)
+
+with st.form("prediction_form"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        pregnancies = st.number_input(
+            "Pregnancies", min_value=0, max_value=20, value=2, step=1
+        )
+        glucose = st.number_input(
+            "Glucose (mg/dL)", min_value=0, max_value=300, value=120, step=1
+        )
+        blood_pressure = st.number_input(
+            "Blood Pressure (mm Hg)",
+            min_value=0,
+            max_value=200,
+            value=70,
+            step=1,
+        )
+        skin_thickness = st.number_input(
+            "Skin Thickness (mm)", min_value=0, max_value=100, value=20, step=1
+        )
+
+    with col2:
+        insulin = st.number_input(
+            "Insulin (mu U/ml)", min_value=0, max_value=900, value=80, step=1
+        )
+        bmi = st.number_input(
+            "BMI (kg/m²)",
+            min_value=0.0,
+            max_value=70.0,
+            value=28.5,
+            step=0.1,
+            format="%.1f",
+        )
+        dpf = st.number_input(
+            "Diabetes Pedigree Function",
+            min_value=0.0,
+            max_value=2.5,
+            value=0.47,
+            step=0.01,
+            format="%.3f",
+        )
+        age = st.number_input(
+            "Age (years)", min_value=1, max_value=120, value=35, step=1
+        )
+
+    submitted = st.form_submit_button("Predict Risk", use_container_width=True)
+
+if submitted:
+    input_df = pd.DataFrame(
+        [[
+            pregnancies,
+            glucose,
+            blood_pressure,
+            skin_thickness,
+            insulin,
+            bmi,
+            dpf,
+            age,
+        ]],
+        columns=feature_names,
+    )
+    input_scaled = scaler.transform(input_df)
+    prediction = model.predict(input_scaled)[0]
+    probability = model.predict_proba(input_scaled)[0][1]
+
+    st.divider()
     if prediction == 1:
-        st.error(f"**High Risk of Diabetes** (Probability: {probability:.1%})")
+        st.error(
+            "**High Risk (Positive)** — Estimated Probability:"
+            f" **{probability:.1%}**"
+        )
     else:
-        st.success(f"**Low Risk of Diabetes** (Probability: {probability:.1%})")
+        st.success(
+            "**Low Risk (Negative)** — Estimated Probability:"
+            f" **{probability:.1%}**"
+        )
+
+    st.caption(
+        "Disclaimer: This tool is for educational and informational purposes"
+        " only and is not a medical diagnosis."
+    )
